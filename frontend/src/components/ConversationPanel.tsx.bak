@@ -1,0 +1,327 @@
+/*对话面板组件 - AI导演团队对话界面*/
+import { useState, useEffect, useRef } from 'react';
+import { Send, Sparkles } from 'lucide-react';
+import { conversationService } from '../services/conversationService';
+import { ShotGenerationPanel } from './ShotGenerationPanel';
+import { generateShotImages, generateVideo } from '../services/shotGenerationService';
+import type { ImageGenerationConfig } from '../services/shotGenerationService';
+import { generationEventService } from '../services/generationEventService';
+import type { Node, Edge } from '@xyflow/react';
+import './ConversationPanel.css';
+
+interface ConversationPanelProps {
+  projectId: string;
+  onNodesUpdate: (nodes: Node[]) => void; // TODO: 实现节点更新逻辑
+  onEdgesUpdate: (edges: Edge[]) => void; // TODO: 实现边更新逻辑
+  onShotsUpdate?: (shots: any[]) => void; // 用于更新Canvas中的镜头数据
+}
+
+interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  agent_type?: string;
+  agent_name?: string;
+  created_at: string;
+  related_node_id?: string;
+  shots_data?: any[]; // 包含的镜头数据
+}
+
+interface Shot {
+  id: string;
+  shot_number: number;
+  shot_description: string;
+  prompt?: string;
+}
+
+export default function ConversationPanel({
+  projectId,
+  onNodesUpdate,
+  onEdgesUpdate,
+  onShotsUpdate,
+}: ConversationPanelProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [shots, setShots] = useState<Shot[]>([]);
+  const [basePrompt, setBasePrompt] = useState('');
+  const [generatedImages, setGeneratedImages] = useState<Map<string, string[]>>(new Map());
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 加载对话历史
+  useEffect(() => {
+    loadMessages();
+  }, [projectId]);
+
+  // 自动滚动到底部
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // 订阅生成完成事件
+  useEffect(() => {
+    const unsubscribeImageComplete = generationEventService.subscribe('image-generation-complete', (data: any) => {
+      setGeneratedImages(prev => new Map(prev).set(data.shotId, data.imageUrls || []));
+    });
+
+    return () => {
+      unsubscribeImageComplete();
+    };
+  }, []);
+
+  const loadMessages = async () => {
+    try {
+      const data = await conversationService.getMessages(projectId);
+      setMessages(data);
+
+      // 检查最后一条消息中是否有镜头数据
+      if (data.length > 0) {
+        const lastMessage = data[data.length - 1];
+        if (lastMessage.shots_data && lastMessage.shots_data.length > 0) {
+          const shotsData = lastMessage.shots_data;
+          setShots(shotsData);
+          setBasePrompt(lastMessage.content);
+          
+          // 通知Canvas更新
+          if (onShotsUpdate) {
+            onShotsUpdate(shotsData);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load messages:', error);
+    }
+  };
+
+  // 轮询获取新消息
+  const pollForMessages = async () => {
+    const maxAttempts = 60; // 最多轮询60次（约2分钟）
+    let attempts = 0;
+    let previousMessageCount = messages.length;
+
+    const poll = setInterval(async () => {
+      attempts++;
+
+      try {
+        await loadMessages();
+
+        // 如果消息数量增加，说明有新消息
+        if (messages.length > previousMessageCount) {
+          previousMessageCount = messages.length;
+
+          // 检查是否有完成标志
+          const lastMessage = messages[messages.length - 1];
+          if (lastMessage?.content?.includes('所有Agent已完成协作') ||
+              lastMessage?.content?.includes('视频正在后台生成')) {
+            clearInterval(poll);
+            setIsLoading(false);
+          }
+        }
+
+        // 超时停止轮询
+        if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+        clearInterval(poll);
+        setIsLoading(false);
+      }
+    }, 2000); // 每2秒轮询一次
+  };
+
+  const handleSendMessage = async () => {
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      // 发送用户消息
+      await conversationService.sendMessage(projectId, {
+        role: 'user',
+        content: userMessage,
+      });
+
+      // 重新加载消息
+      await loadMessages();
+
+      // 调用AI Agent工作流
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/agents/v2/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          message: userMessage,
+        }),
+      });
+
+      if (response.ok) {
+        // 开始轮询获取Agent的响应消息
+        pollForMessages();
+      } else {
+        setIsLoading(false);
+        console.error('Failed to call AI agents');
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      setIsLoading(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // 处理生成图片
+  const handleGenerateImage = async (shot: Shot, config?: ImageGenerationConfig) => {
+    try {
+      const result = await generateShotImages(projectId, shot, basePrompt, config);
+      console.log('图片生成完成:', result);
+      
+      // 触发事件以通知Canvas更新
+      window.dispatchEvent(new CustomEvent('shot-image-generated', {
+        detail: {
+          shotId: shot.id,
+          shotNumber: shot.shot_number,
+          imageIds: result.imageIds,
+          imageUrls: result.imageUrls,
+          seed: config?.seed,
+        }
+      }));
+    } catch (error) {
+      console.error('生成图片失败:', error);
+    }
+  };
+
+  // 处理生成视频
+  const handleGenerateVideo = async (shot: Shot) => {
+    try {
+      const imageUrls = generatedImages.get(shot.id);
+      if (!imageUrls || imageUrls.length === 0) {
+        alert('请先生成图片');
+        return;
+      }
+
+      // 这里需要从API获取图片ID，为了简化现在使用URL
+      const result = await generateVideo(projectId, shot, [], basePrompt);
+      console.log('视频生成完成:', result);
+
+      // 触发事件以通知Canvas更新
+      window.dispatchEvent(new CustomEvent('shot-video-generated', {
+        detail: {
+          shotId: shot.id,
+          shotNumber: shot.shot_number,
+          videoId: result.videoId,
+          videoUrl: result.videoUrl,
+        }
+      }));
+    } catch (error) {
+      console.error('生成视频失败:', error);
+    }
+  };
+
+  return (
+    <div className="conversation-panel">
+      {/* 头部 */}
+      <div className="conversation-header">
+        <div className="header-icon">
+          <Sparkles size={20} />
+        </div>
+        <div className="header-title">
+          <h2>AI导演团队</h2>
+          <p className="header-subtitle">与你一起创作视频</p>
+        </div>
+      </div>
+
+      {/* 镜头生成面板 */}
+      {shots.length > 0 && (
+        <div className="shot-generation-container">
+          <ShotGenerationPanel
+            projectId={projectId}
+            shots={shots}
+            onGenerateImage={handleGenerateImage}
+            onGenerateVideo={handleGenerateVideo}
+          />
+        </div>
+      )}
+
+      {/* 消息列表 */}
+      <div className="messages-container">
+        {messages.length === 0 ? (
+          <div className="empty-state">
+            <Sparkles size={48} className="empty-icon" />
+            <h3>开始你的创作之旅</h3>
+            <p>告诉AI导演团队你的创意想法，我们将帮你实现</p>
+            <div className="example-prompts">
+              <p className="example-title">试试这样：</p>
+              <button
+                className="example-prompt"
+                onClick={() => setInput('我想制作一个关于未来城市的短片')}
+              >
+                🎬 我想制作一个关于未来城市的短片
+              </button>
+              <button
+                className="example-prompt"
+                onClick={() => setInput('帮我创作一个温馨的咖啡厅场景')}
+              >
+                ☕ 帮我创作一个温馨的咖啡厅场景
+              </button>
+            </div>
+          </div>
+        ) : (
+          messages.map((message) => (
+            <div
+              key={message.id}
+              className={`message ${message.role === 'user' ? 'user-message' : 'assistant-message'}`}
+            >
+              {message.role === 'assistant' && message.agent_name && (
+                <div className="message-agent-badge">{message.agent_name}</div>
+              )}
+              <div className="message-content">{message.content}</div>
+              <div className="message-time">
+                {new Date(message.created_at).toLocaleTimeString()}
+              </div>
+            </div>
+          ))
+        )}
+        {isLoading && (
+          <div className="message assistant-message">
+            <div className="message-agent-badge">AI总控</div>
+            <div className="message-content loading">
+              <span className="loading-dots">思考中</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* 输入框 */}
+      <div className="input-container">
+        <textarea
+          className="message-input"
+          placeholder="描述你的创意想法..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyPress={handleKeyPress}
+          rows={3}
+          disabled={isLoading}
+        />
+        <button
+          className="send-button"
+          onClick={handleSendMessage}
+          disabled={!input.trim() || isLoading}
+        >
+          <Send size={20} />
+        </button>
+      </div>
+    </div>
+  );
+}

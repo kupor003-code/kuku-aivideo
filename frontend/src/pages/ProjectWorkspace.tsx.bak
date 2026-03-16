@@ -1,0 +1,382 @@
+/*项目工作台 - V2架构（AI导演团队 + Agent Canvas）*/
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ReactFlow,
+  type Node,
+  type Edge,
+  addEdge,
+  type Connection,
+  useNodesState,
+  useEdgesState,
+  Controls,
+  Background,
+  MiniMap,
+  type NodeTypes,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Settings } from 'lucide-react';
+import ConversationPanel from '../components/ConversationPanel';
+import ProjectConfigPanel from '../components/ProjectConfigPanel';
+import PromptNode from '../components/canvas/PromptNode';
+import StoryboardNode from '../components/canvas/StoryboardNode';
+import VideoNode from '../components/canvas/VideoNode';
+import { projectService } from '../services/projectService';
+import { canvasNodeService } from '../services/canvasNodeService';
+import { videoService } from '../services/videoService';
+import type { Project } from '../types';
+import './ProjectWorkspace.css';
+
+// 节点类型配置
+const nodeTypes = {
+  prompt: PromptNode,
+  storyboard: StoryboardNode,
+  video: VideoNode,
+};
+
+export default function ProjectWorkspace() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
+
+  // 状态
+  const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [showConfigPanel, setShowConfigPanel] = useState(false);
+
+  // 加载项目
+  useEffect(() => {
+    const loadProject = async () => {
+      if (!projectId) {
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const data = await projectService.get(projectId);
+        setProject(data);
+
+        // 从canvas_data加载节点
+        if (data.canvas_data?.nodes && data.canvas_data?.edges) {
+          setNodes(data.canvas_data.nodes);
+          setEdges(data.canvas_data.edges);
+        } else {
+          // 如果没有Canvas数据，尝试加载历史内容
+          await loadProjectHistoricalContent(projectId);
+        }
+      } catch (error) {
+        console.error('Failed to load project:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadProject();
+
+    // 设置自动刷新Canvas（每5秒）
+    const refreshInterval = setInterval(async () => {
+      if (projectId) {
+        try {
+          const data = await projectService.get(projectId);
+          if (data.canvas_data?.nodes && data.canvas_data?.edges) {
+            setNodes(data.canvas_data.nodes);
+            setEdges(data.canvas_data.edges);
+          }
+        } catch (error) {
+          console.error('Failed to refresh canvas:', error);
+        }
+      }
+    }, 5000);
+
+    return () => clearInterval(refreshInterval);
+  }, [projectId, setNodes, setEdges]);
+
+  // 加载项目历史内容（图片和视频）
+  const loadProjectHistoricalContent = async (projectId: string) => {
+    try {
+      // 获取项目的所有图片和视频
+      const contentResponse = await fetch(`/api/v1/projects/${projectId}/content`);
+      if (!contentResponse.ok) {
+        console.log('未找到项目历史内容');
+        return;
+      }
+
+      const content = await contentResponse.json();
+      const { images, videos } = content;
+
+      if (!images?.length && !videos?.length) {
+        console.log('项目没有历史内容');
+        return;
+      }
+
+      // 创建Canvas节点
+      const newNodes: Node[] = [];
+      const newEdges: Edge[] = [];
+      let yPosition = 0;
+
+      // 如果有图片，创建Storyboard节点
+      if (images.length > 0) {
+        const storyboardNode: Node = {
+          id: `storyboard-${Date.now()}`,
+          type: 'storyboard',
+          position: { x: 0, y: yPosition },
+          data: {
+            label: `分镜 (${images.length}张图片)`,
+            projectId,
+            images: images.map((img: any) => ({
+              id: img.id,
+              url: img.url,
+              prompt: img.prompt,
+            })),
+            prompt: images[0]?.prompt || '',
+            status: 'completed',
+          },
+        };
+        newNodes.push(storyboardNode);
+        yPosition += 200;
+      }
+
+      // 如果有视频，创建Video节点
+      if (videos.length > 0) {
+        const videoNode: Node = {
+          id: `video-${Date.now()}`,
+          type: 'video',
+          position: { x: 0, y: yPosition },
+          data: {
+            label: `视频 (${videos.length}个)`,
+            projectId,
+            video_urls: videos.map((video: any) => ({
+              id: video.id,
+              url: video.url,
+              thumbnail: video.thumbnail,
+            })),
+            status: 'completed',
+            total_videos: videos.length,
+          },
+        };
+        newNodes.push(videoNode);
+
+        // 如果有Storyboard节点，创建连接
+        if (newNodes.length > 1) {
+          newEdges.push({
+            id: `edge-storyboard-to-video`,
+            source: `storyboard-${Date.now() - 1}`,
+            target: `video-${Date.now()}`,
+          });
+        }
+      }
+
+      if (newNodes.length > 0) {
+        setNodes(newNodes);
+        setEdges(newEdges);
+      }
+    } catch (error) {
+      console.error('加载项目历史内容失败:', error);
+    }
+  };
+
+  // 连接节点
+  const onConnect = useCallback(
+    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
+    [setEdges]
+  );
+
+  // 保存Canvas布局
+  const saveCanvasLayout = useCallback(() => {
+    if (!project) return;
+
+    projectService.update(project.id, {
+      canvas_data: {
+        nodes,
+        edges,
+      },
+    });
+  }, [project, nodes, edges]);
+
+  // 节点变化时自动保存
+  useEffect(() => {
+    if (!isLoading && nodes.length > 0) {
+      const timer = setTimeout(saveCanvasLayout, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [nodes, edges, isLoading, saveCanvasLayout]);
+
+  // 监听从照片生成视频的事件
+  useEffect(() => {
+    const handleGenerateVideoFromImage = async (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { imageUrl, prompt, imageId, projectId: sourceProjectId } = customEvent.detail;
+      
+      console.log('收到生成视频请求:', {
+        imageUrl,
+        prompt,
+        imageId,
+        projectId: sourceProjectId,
+      });
+
+      try {
+        // 找到视频节点ID
+        const videoNodeId = nodes.find((node: any) => node.type === 'video')?.id;
+        if (!videoNodeId) {
+          console.warn('未找到视频节点');
+          return;
+        }
+
+        // 更新视频节点为生成中状态
+        const updatedNodes = nodes.map((node: any) => {
+          if (node.id === videoNodeId) {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: 'generating',
+                progress: 0,
+              }
+            };
+          }
+          return node;
+        });
+        setNodes(updatedNodes);
+
+        // 触发视频生成
+        const response = await canvasNodeService.generateVideoFromImage(
+          sourceProjectId,
+          imageUrl,
+          prompt,
+          5,  // duration
+          30,  // fps
+          imageId  // 传递源图片ID用于溯源
+        );
+
+        console.log('视频生成任务已启动:', response.task_id);
+
+        // 轮询任务状态
+        const videoProgress = (progress: number) => {
+          setNodes((currentNodes) => 
+            currentNodes.map((node: any) => {
+              if (node.id === videoNodeId) {
+                return {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    progress,
+                  }
+                };
+              }
+              return node;
+            })
+          );
+        };
+
+        const result = await videoService.waitForCompletion(response.task_id, videoProgress);
+        
+        if (result.results && result.results.length > 0) {
+          // 更新视频节点为已完成状态
+          setNodes((currentNodes) =>
+            currentNodes.map((node: any) => {
+              if (node.id === videoNodeId) {
+                return {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    status: 'completed',
+                    progress: 100,
+                    video_urls: result.results,
+                    total_videos: result.results.length,
+                  }
+                };
+              }
+              return node;
+            })
+          );
+        }
+      } catch (error) {
+        console.error('视频生成失败:', error);
+        // 更新节点为失败状态
+        setNodes((currentNodes) =>
+          currentNodes.map((node: any) => {
+            if (node.type === 'video') {
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: 'failed',
+                }
+              };
+            }
+            return node;
+          })
+        );
+      }
+    };
+
+    window.addEventListener('generate-video-from-image', handleGenerateVideoFromImage);
+    return () => window.removeEventListener('generate-video-from-image', handleGenerateVideoFromImage);
+  }, [nodes, setNodes]);
+
+  if (isLoading) {
+    return (
+      <div className="project-workspace-loading">
+        <div className="loading-spinner">加载中...</div>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="project-workspace-empty">
+        <h2>项目不存在</h2>
+        <button onClick={() => navigate('/projects')}>返回项目列表</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="project-workspace">
+      {/* 左侧：对话面板 */}
+      <ConversationPanel
+        projectId={project.id}
+        onNodesUpdate={(newNodes) => setNodes(newNodes)}
+        onEdgesUpdate={(newEdges) => setEdges(newEdges)}
+      />
+
+      {/* 右侧：Canvas画布 */}
+      <div className="canvas-container">
+        <div className="canvas-header">
+          <div className="canvas-title">
+            <h1>{project.title}</h1>
+            <p className="project-description">{project.description || '暂无描述'}</p>
+          </div>
+          <button
+            className="config-button"
+            onClick={() => setShowConfigPanel(true)}
+            title="项目设置"
+          >
+            <Settings size={20} />
+            <span>设置</span>
+          </button>
+        </div>
+
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          nodeTypes={nodeTypes}
+          fitView
+        >
+          <Background />
+          <Controls />
+          <MiniMap />
+        </ReactFlow>
+      </div>
+
+      {/* 项目配置面板 */}
+      {showConfigPanel && projectId && (
+        <ProjectConfigPanel projectId={projectId} onClose={() => setShowConfigPanel(false)} />
+      )}
+    </div>
+  );
+}

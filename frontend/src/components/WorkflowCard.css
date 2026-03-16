@@ -1,0 +1,393 @@
+/* 卡片式工作流样式 */
+
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* 工具栏 */
+.workflow-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  border-bottom: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-section h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.node-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.node-btn {
+  padding: 8px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.node-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.node-btn.script-btn:hover { background: #f0f4ff; }
+.node-btn.prompt-btn:hover { background: #fef3c7; }
+.node-btn.storyboard-btn:hover { background: #d1fae5; }
+.node-btn.image-btn:hover { background: #ede9fe; }
+.node-btn.video-btn:hover { background: #fce7f3; }
+
+.control-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.control-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.run-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.run-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.clear-btn {
+  background: #ef4444;
+  color: white;
+}
+
+.clear-btn:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+/* 节点列表区 */
+.workflow-nodes {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+/* 空状态 */
+.empty-workflow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #94a3b8;
+  text-align: center;
+  padding: 40px;
+}
+
+.empty-icon {
+  font-size: 64px;
+  opacity: 0.5;
+  margin-bottom: 16px;
+}
+
+.empty-workflow h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  color: #64748b;
+}
+
+.empty-workflow p {
+  margin: 0 0 24px 0;
+  font-size: 14px;
+}
+
+.workflow-tips {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+  max-width: 400px;
+}
+
+.workflow-tips p {
+  margin: 0 0 12px 0;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.workflow-tips ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #64748b;
+}
+
+.workflow-tips li {
+  margin-bottom: 4px;
+}
+
+/* 节点列表 */
+.nodes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 节点卡片 */
+.workflow-node-card {
+  background: white;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+.workflow-node-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.workflow-node-card.running {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: currentColor;
+  }
+  50% {
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+}
+
+.workflow-node-card.completed {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+}
+
+.workflow-node-card.error {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border-color: #ef4444;
+}
+
+/* 节点头部 */
+.node-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.node-number {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.node-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-icon {
+  font-size: 20px;
+}
+
+.node-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.remove-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.remove-btn:hover:not(:disabled) {
+  background: #fef2f2;
+  color: #ef4444;
+}
+
+/* 节点主体 */
+.node-card-body {
+  padding: 16px;
+}
+
+.node-description {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+/* 状态徽章 */
+.node-status {
+  margin-bottom: 12px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-badge.pending {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.status-badge.running {
+  background: #fef3c7;
+  color: #d97706;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.status-badge.completed {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.status-badge.error {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* 执行按钮 */
+.execute-btn {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.execute-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.execute-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 结果展示 */
+.node-result {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.result-summary {
+  font-size: 13px;
+  color: #059669;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.result-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.result-image {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.result-video {
+  margin-top: 8px;
+}
+
+.result-video-player {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}

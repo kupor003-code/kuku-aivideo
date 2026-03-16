@@ -1,0 +1,363 @@
+/**
+ * 镜头生成服务 - 处理生成图片和视频的API调用，并同步进度到事件系统
+ */
+
+import { generationEventService } from './generationEventService';
+
+export interface Shot {
+  id: string;
+  shot_number: number;
+  shot_description: string;
+  prompt?: string;
+}
+
+export interface ImageGenerationConfig {
+  num_images?: number;  // 生成图片数量，默认 3
+  seed?: number;        // 随机种子，默认随机
+  size?: string;        // 图片尺寸，默认 1024*1024
+}
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+/**
+ * 生成单个镜头的图片
+ */
+export async function generateShotImages(
+  projectId: string,
+  shot: Shot,
+  basePrompt: string,
+  config?: ImageGenerationConfig
+): Promise<{ imageIds: string[]; imageUrls: string[] }> {
+  try {
+    // 合并配置，使用默认值
+    const finalConfig = {
+      num_images: config?.num_images || 3,
+      seed: config?.seed !== undefined ? config.seed : undefined,
+      size: config?.size || '1024*1024',
+    };
+
+    // 构建请求体
+    const requestBody: any = {
+      project_id: projectId,
+      shot_number: shot.shot_number,
+      shot_description: shot.shot_description,
+      prompt: shot.prompt || basePrompt,
+      size: finalConfig.size,
+      n: finalConfig.num_images,
+    };
+
+    // 如果提供了种子，添加到请求中
+    if (finalConfig.seed !== undefined) {
+      requestBody.seed = finalConfig.seed;
+    }
+
+    // 发送生成请求
+    const response = await fetch(`${API_URL}/storyboard/shots/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API返回错误: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const shotGenId = result.shot_gen_id;
+
+    // 轮询获取生成进度
+    return await pollShotGenerationProgress(projectId, shotGenId, shot);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : '未知错误';
+    generationEventService.failImageGeneration(shot.id, shot.shot_number, errorMsg);
+    throw error;
+  }
+}
+
+/**
+ * 轮询获取镜头生成进度
+ */
+async function pollShotGenerationProgress(
+  projectId: string,
+  shotGenId: string,
+  shot: Shot
+): Promise<{ imageIds: string[]; imageUrls: string[] }> {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const maxAttempts = 120; // 最多轮询120次（2分钟）
+
+    const poll = setInterval(async () => {
+      attempts++;
+
+      try {
+        const response = await fetch(
+          `${API_URL}/storyboard/shots/${shotGenId}/status`,
+          { method: 'GET' }
+        );
+
+        if (!response.ok) {
+          throw new Error(`查询状态失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 更新进度
+        if (data.progress !== undefined) {
+          generationEventService.updateImageProgress(
+            shot.id,
+            data.progress,
+            `正在生成镜头 ${shot.shot_number} 的图片... (${data.progress}%)`
+          );
+        }
+
+        // 检查是否完成
+        if (data.status === 'completed' && data.image_ids && data.image_urls) {
+          clearInterval(poll);
+          generationEventService.completeImageGeneration(
+            shot.id,
+            shot.shot_number,
+            data.image_ids,
+            data.image_urls
+          );
+          resolve({
+            imageIds: data.image_ids,
+            imageUrls: data.image_urls,
+          });
+        }
+
+        // 检查是否失败
+        if (data.status === 'failed') {
+          clearInterval(poll);
+          const errorMsg = data.error || '生成失败';
+          generationEventService.failImageGeneration(shot.id, shot.shot_number, errorMsg);
+          reject(new Error(errorMsg));
+        }
+
+        // 超时
+        if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          generationEventService.failImageGeneration(
+            shot.id,
+            shot.shot_number,
+            '生成超时'
+          );
+          reject(new Error('生成超时'));
+        }
+      } catch (error) {
+        clearInterval(poll);
+        const errorMsg = error instanceof Error ? error.message : '轮询错误';
+        generationEventService.failImageGeneration(shot.id, shot.shot_number, errorMsg);
+        reject(error);
+      }
+    }, 1000); // 每秒轮询一次
+  });
+}
+
+/**
+ * 生成视频
+ */
+export async function generateVideo(
+  projectId: string,
+  shot: Shot,
+  imageIds: string[],
+  basePrompt: string
+): Promise<{ videoId: string; videoUrl: string }> {
+  try {
+    generationEventService.startVideoGeneration(shot.id, shot.shot_number);
+
+    const response = await fetch(`${API_URL}/storyboard/videos/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        shot_number: shot.shot_number,
+        image_ids: imageIds,
+        prompt: shot.prompt || basePrompt,
+        duration: 3,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`视频生成API返回错误: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const videoGenId = result.video_gen_id;
+
+    // 轮询获取视频生成进度
+    return await pollVideoGenerationProgress(projectId, videoGenId, shot);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : '未知错误';
+    generationEventService.failVideoGeneration(shot.id, shot.shot_number, errorMsg);
+    throw error;
+  }
+}
+
+/**
+ * 轮询获取视频生成进度
+ */
+async function pollVideoGenerationProgress(
+  projectId: string,
+  videoGenId: string,
+  shot: Shot
+): Promise<{ videoId: string; videoUrl: string }> {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const maxAttempts = 120; // 最多轮询120次（2分钟）
+
+    const poll = setInterval(async () => {
+      attempts++;
+
+      try {
+        const response = await fetch(
+          `${API_URL}/storyboard/videos/${videoGenId}/status`,
+          { method: 'GET' }
+        );
+
+        if (!response.ok) {
+          throw new Error(`查询视频状态失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 更新进度
+        if (data.progress !== undefined) {
+          generationEventService.updateVideoProgress(
+            shot.id,
+            data.progress,
+            `正在生成镜头 ${shot.shot_number} 的视频... (${data.progress}%)`
+          );
+        }
+
+        // 检查是否完成
+        if (data.status === 'completed' && data.video_id && data.video_url) {
+          clearInterval(poll);
+          generationEventService.completeVideoGeneration(
+            shot.id,
+            shot.shot_number,
+            data.video_id,
+            data.video_url
+          );
+          resolve({
+            videoId: data.video_id,
+            videoUrl: data.video_url,
+          });
+        }
+
+        // 检查是否失败
+        if (data.status === 'failed') {
+          clearInterval(poll);
+          const errorMsg = data.error || '视频生成失败';
+          generationEventService.failVideoGeneration(shot.id, shot.shot_number, errorMsg);
+          reject(new Error(errorMsg));
+        }
+
+        // 超时
+        if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          generationEventService.failVideoGeneration(
+            shot.id,
+            shot.shot_number,
+            '视频生成超时'
+          );
+          reject(new Error('视频生成超时'));
+        }
+      } catch (error) {
+        clearInterval(poll);
+        const errorMsg = error instanceof Error ? error.message : '轮询错误';
+        generationEventService.failVideoGeneration(shot.id, shot.shot_number, errorMsg);
+        reject(error);
+      }
+    }, 1000); // 每秒轮询一次
+  });
+}
+
+/**
+ * 暂停镜头生成
+ */
+export async function pauseShotGeneration(shotGenId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/storyboard/shots/${shotGenId}/pause`,
+    { method: 'POST' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`暂停失败: ${response.status}`);
+  }
+}
+
+/**
+ * 继续镜头生成
+ */
+export async function resumeShotGeneration(shotGenId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/storyboard/shots/${shotGenId}/resume`,
+    { method: 'POST' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`继续失败: ${response.status}`);
+  }
+}
+
+/**
+ * 删除镜头生成任务
+ */
+export async function deleteShotGeneration(shotGenId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/storyboard/shots/${shotGenId}`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`删除失败: ${response.status}`);
+  }
+}
+
+/**
+ * 删除项目所有镜头生成任务
+ */
+export async function deleteAllShotGenerations(projectId: string): Promise<number> {
+  const response = await fetch(
+    `${API_URL}/storyboard/projects/${projectId}/shots`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`删除失败: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.deleted_count || 0;
+}
+
+/**
+ * 删除视频生成任务
+ */
+export async function deleteVideoGeneration(videoId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/videos/${videoId}`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`删除失败: ${response.status}`);
+  }
+}
+
+/**
+ * 删除项目所有视频生成任务
+ */
+export async function deleteAllVideoGenerations(projectId: string): Promise<number> {
+  const response = await fetch(
+    `${API_URL}/videos/projects/${projectId}/videos`,
+    { method: 'DELETE' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`删除失败: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.deleted_count || 0;
+}

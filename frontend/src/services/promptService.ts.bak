@@ -1,0 +1,59 @@
+/*提示词服务*/
+import api from './api';
+
+export enum PromptType {
+  IMAGE = 'image',
+  VIDEO = 'video',
+}
+
+export enum PromptSource {
+  USER = 'user',
+  AI = 'ai',
+  OPTIMIZED = 'optimized',
+}
+
+export interface PromptCreate {
+  project_id: string;
+  type: PromptType;
+  content: string;
+  source?: PromptSource;
+  parent_id?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface Prompt {
+  id: string;
+  project_id: string;
+  type: PromptType;
+  content: string;
+  version: number;
+  parent_id?: string;
+  source: PromptSource;
+  meta: Record<string, any>;
+  created_at: string;
+}
+
+export const promptService = {
+  /**
+   * 创建提示词
+   */
+  async create(data: PromptCreate): Promise<Prompt> {
+    return api.post('/prompts/', data);
+  },
+
+  /**
+   * 获取项目的所有提示词
+   */
+  async getProjectPrompts(projectId: string, promptType?: PromptType): Promise<Prompt[]> {
+    return api.get(`/prompts/project/${projectId}`, {
+      params: promptType ? { prompt_type: promptType } : undefined,
+    });
+  },
+
+  /**
+   * 获取提示词详情
+   */
+  async get(promptId: string): Promise<Prompt> {
+    return api.get(`/prompts/${promptId}`);
+  },
+};

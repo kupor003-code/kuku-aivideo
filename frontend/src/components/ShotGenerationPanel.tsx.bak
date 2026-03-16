@@ -1,0 +1,349 @@
+/**
+ * 镜头生成面板 - 在对话框中显示镜头列表和生成控制，支持详细配置
+ */
+
+import React, { useState, useEffect } from 'react';
+import { Sparkles, Play, Pause, AlertCircle, CheckCircle, Zap, Settings, X } from 'lucide-react';
+import { generationEventService } from '../services/generationEventService';
+import type { GenerationProgress } from '../services/generationEventService';
+import type { ImageGenerationConfig } from '../services/shotGenerationService';
+import './ShotGenerationPanel.css';
+
+export interface Shot {
+  id: string;
+  shot_number: number;
+  shot_description: string;
+  prompt?: string;
+}
+
+interface ShotGenerationPanelProps {
+  projectId: string;
+  shots: Shot[];
+  onGenerateImage: (shot: Shot, config?: ImageGenerationConfig) => Promise<void>;
+  onGenerateVideo: (shot: Shot) => Promise<void>;
+}
+
+interface ConfigState {
+  [shotId: string]: ImageGenerationConfig;
+}
+
+export const ShotGenerationPanel: React.FC<ShotGenerationPanelProps> = ({
+  projectId,
+  shots,
+  onGenerateImage,
+  onGenerateVideo,
+}) => {
+  const [shotProgress, setShotProgress] = useState<Map<string, GenerationProgress>>(new Map());
+  const [loadingShots, setLoadingShots] = useState<Set<string>>(new Set());
+  const [generatedImages, setGeneratedImages] = useState<Map<string, { urls: string[]; count: number; seed?: number }>>(new Map());
+  const [configDialogOpen, setConfigDialogOpen] = useState<string | null>(null);
+  const [configs, setConfigs] = useState<ConfigState>({});
+
+  // 订阅生成进度事件
+  useEffect(() => {
+    const unsubscribeProgress = generationEventService.subscribe('progress', (progress: GenerationProgress) => {
+      setShotProgress(prev => new Map(prev).set(progress.shot_id, progress));
+    });
+
+    const unsubscribeImageComplete = generationEventService.subscribe('image-generation-complete', (data: any) => {
+      setGeneratedImages(prev => new Map(prev).set(data.shotId, {
+        urls: data.imageUrls || [],
+        count: data.imageIds?.length || 0,
+        seed: data.seed,
+      }));
+    });
+
+    return () => {
+      unsubscribeProgress();
+      unsubscribeImageComplete();
+    };
+  }, []);
+
+  // 处理图片生成
+  const handleGenerateImage = async (shot: Shot) => {
+    setLoadingShots(prev => new Set(prev).add(shot.id));
+    try {
+      generationEventService.startImageGeneration(shot.id, shot.shot_number);
+      const config = configs[shot.id];
+      await onGenerateImage(shot, config);
+    } catch (error) {
+      generationEventService.failImageGeneration(shot.id, shot.shot_number, String(error));
+    } finally {
+      setLoadingShots(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(shot.id);
+        return newSet;
+      });
+    }
+  };
+
+  // 处理视频生成
+  const handleGenerateVideo = async (shot: Shot) => {
+    const videoKey = `video-${shot.id}`;
+    setLoadingShots(prev => new Set(prev).add(videoKey));
+    try {
+      generationEventService.startVideoGeneration(shot.id, shot.shot_number);
+      await onGenerateVideo(shot);
+    } catch (error) {
+      generationEventService.failVideoGeneration(shot.id, shot.shot_number, String(error));
+    } finally {
+      setLoadingShots(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(videoKey);
+        return newSet;
+      });
+    }
+  };
+
+  // 更新配置
+  const handleConfigChange = (shotId: string, config: ImageGenerationConfig) => {
+    setConfigs(prev => ({ ...prev, [shotId]: config }));
+  };
+
+  if (!shots || shots.length === 0) {
+    return (
+      <div className="shot-generation-panel empty">
+        <p>暂无镜头信息</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="shot-generation-panel">
+      <div className="panel-header">
+        <h3>镜头生成任务</h3>
+        <span className="shot-count">{shots.length}个镜头</span>
+      </div>
+
+      <div className="shots-list">
+        {shots.map((shot) => {
+          const progress = shotProgress.get(shot.id);
+          const imageData = generatedImages.get(shot.id);
+          const hasImages = imageData && imageData.urls.length > 0;
+          const isLoading = loadingShots.has(shot.id) || loadingShots.has(`video-${shot.id}`);
+          const config = configs[shot.id];
+
+          return (
+            <div key={shot.id} className={`shot-item ${progress?.status || 'pending'}`}>
+              {/* 镜头头部 */}
+              <div className="shot-item-header">
+                <span className="shot-number">镜头 {shot.shot_number}</span>
+                {progress && (
+                  <span className={`shot-status ${progress.status}`}>
+                    {progress.status === 'generating' && '⏳ 生成中'}
+                    {progress.status === 'completed' && '✓ 完成'}
+                    {progress.status === 'failed' && '✗ 失败'}
+                    {progress.status === 'pending' && '⭕ 待生成'}
+                  </span>
+                )}
+              </div>
+
+              {/* 镜头描述 */}
+              <div className="shot-description">{shot.shot_description}</div>
+
+              {/* 提示词显示 */}
+              {shot.prompt && (
+                <div className="shot-prompt">
+                  <span className="prompt-label">提示词:</span>
+                  <span className="prompt-text">{shot.prompt}</span>
+                </div>
+              )}
+
+              {/* 配置信息 */}
+              {config && (
+                <div className="shot-config-info">
+                  <span className="config-item">📊 {config.num_images || 3}张图</span>
+                  {config.seed !== undefined && <span className="config-item">🌱 种子:{config.seed}</span>}
+                </div>
+              )}
+
+              {/* 生成结果信息 */}
+              {hasImages && (
+                <div className="shot-result">
+                  <CheckCircle size={14} />
+                  已生成 {imageData.count} 张图片
+                  {imageData.seed !== undefined && <span className="seed-info">（种子: {imageData.seed}）</span>}
+                </div>
+              )}
+
+              {/* 进度信息 */}
+              {progress && (progress.status === 'generating' || progress.status === 'paused') && (
+                <div className="shot-progress">
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${progress.progress}%` }}></div>
+                  </div>
+                  <div className="progress-text">{progress.progress}%</div>
+                  {progress.message && <div className="progress-message">{progress.message}</div>}
+                </div>
+              )}
+
+              {/* 错误信息 */}
+              {progress?.error && (
+                <div className="shot-error">
+                  <AlertCircle size={14} />
+                  {progress.error}
+                </div>
+              )}
+
+              {/* 控制按钮 */}
+              <div className="shot-actions">
+                {/* 配置按钮 */}
+                <button
+                  className="shot-action-btn config-btn"
+                  onClick={() => setConfigDialogOpen(shot.id)}
+                  title="配置生成参数"
+                >
+                  <Settings size={14} />
+                  配置
+                </button>
+
+                {/* 图片生成按钮 */}
+                <button
+                  className={`shot-action-btn image-btn ${!progress || progress.type === 'image' ? 'active' : ''}`}
+                  onClick={() => handleGenerateImage(shot)}
+                  disabled={isLoading || (progress && progress.type === 'image' && progress.status === 'generating')}
+                  title="生成该镜头的图片"
+                >
+                  <Sparkles size={14} />
+                  生成图片
+                  {progress?.type === 'image' && progress.status === 'generating' && <span className="spinner"></span>}
+                </button>
+
+                {/* 视频生成按钮 - 仅在有图片时启用 */}
+                <button
+                  className={`shot-action-btn video-btn ${hasImages ? 'enabled' : 'disabled'}`}
+                  onClick={() => handleGenerateVideo(shot)}
+                  disabled={!hasImages || isLoading || (progress && progress.type === 'video' && progress.status === 'generating')}
+                  title={hasImages ? '生成该镜头的视频' : '需要先生成图片'}
+                >
+                  <Zap size={14} />
+                  生成视频
+                  {progress?.type === 'video' && progress.status === 'generating' && <span className="spinner"></span>}
+                </button>
+              </div>
+
+              {/* 配置对话框 */}
+              {configDialogOpen === shot.id && (
+                <ImageConfigDialog
+                  shot={shot}
+                  config={configs[shot.id] || {}}
+                  onConfigChange={(newConfig) => handleConfigChange(shot.id, newConfig)}
+                  onClose={() => setConfigDialogOpen(null)}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * 图片生成配置对话框
+ */
+interface ImageConfigDialogProps {
+  shot: Shot;
+  config: ImageGenerationConfig;
+  onConfigChange: (config: ImageGenerationConfig) => void;
+  onClose: () => void;
+}
+
+const ImageConfigDialog: React.FC<ImageConfigDialogProps> = ({
+  shot,
+  config,
+  onConfigChange,
+  onClose,
+}) => {
+  const [numImages, setNumImages] = useState(config.num_images || 3);
+  const [seed, setSeed] = useState(config.seed?.toString() || '');
+  const [randomSeed, setRandomSeed] = useState(!config.seed);
+
+  const handleSave = () => {
+    const newConfig: ImageGenerationConfig = {
+      num_images: numImages,
+      seed: randomSeed ? undefined : parseInt(seed),
+    };
+    onConfigChange(newConfig);
+    onClose();
+  };
+
+  return (
+    <div className="config-dialog-overlay" onClick={onClose}>
+      <div className="config-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-header">
+          <h3>配置镜头 {shot.shot_number} 的生成参数</h3>
+          <button className="close-btn" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="dialog-content">
+          {/* 生成数量 */}
+          <div className="config-group">
+            <label htmlFor="num-images">📊 生成图片数量</label>
+            <div className="input-group">
+              <input
+                id="num-images"
+                type="range"
+                min="1"
+                max="10"
+                value={numImages}
+                onChange={(e) => setNumImages(parseInt(e.target.value))}
+              />
+              <span className="value-display">{numImages} 张</span>
+            </div>
+            <p className="hint">范围: 1-10 张图片</p>
+          </div>
+
+          {/* 随机种子 */}
+          <div className="config-group">
+            <label>🌱 随机种子</label>
+            <div className="seed-options">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={randomSeed}
+                  onChange={(e) => setRandomSeed(e.target.checked)}
+                />
+                <span>使用随机种子</span>
+              </label>
+            </div>
+
+            {!randomSeed && (
+              <div className="input-group">
+                <input
+                  type="number"
+                  min="0"
+                  max="999999"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  placeholder="输入种子数值 (0-999999)"
+                />
+              </div>
+            )}
+            <p className="hint">
+              {randomSeed ? '每次生成都使用不同的随机种子' : '相同的种子会生成相同的图片'}
+            </p>
+          </div>
+
+          {/* 显示当前配置 */}
+          <div className="config-preview">
+            <h4>配置预览：</h4>
+            <p>• 生成 <strong>{numImages}</strong> 张图片</p>
+            <p>• 随机种子: <strong>{randomSeed ? '随机' : seed || '未设置'}</strong></p>
+          </div>
+        </div>
+
+        <div className="dialog-actions">
+          <button className="btn-cancel" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn-save" onClick={handleSave}>
+            保存配置
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

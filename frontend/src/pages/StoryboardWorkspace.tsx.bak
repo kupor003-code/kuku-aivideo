@@ -1,0 +1,704 @@
+/*分镜工作台页面*/
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Image, Plus, Trash2, Star } from '@geist-ui/icons';
+import { useStoryboardStore } from '../store/useStoryboardStore';
+import { storyboardService } from '../services/storyboardService';
+import { projectService } from '../services/projectService';
+import { promptService, PromptType } from '../services/promptService';
+import { storyboardImageService } from '../services/storyboardImageService';
+import { coordinatorService } from '../services/coordinatorService';
+import { videoService } from '../services/videoService';
+import type { Project, WorkflowState } from '../types';
+import './StoryboardWorkspace.css';
+
+// 简单的加载图标组件
+const LoadingIcon = () => (
+  <svg className="loading-icon" viewBox="0 0 50 50" style={{width: 24, height: 24}}>
+    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="5">
+      <animate attributeName="stroke-dasharray" from="0, 100" to="100, 0" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke-dashoffset" from="0" to="-100" dur="2s" repeatCount="indefinite"/>
+    </circle>
+  </svg>
+);
+
+// 组合图标
+const ImagePlusIcon = () => (
+  <span style={{display: 'inline-flex', alignItems: 'center', gap: '4px'}}>
+    <Image size={18} />
+    <Plus size={18} />
+  </span>
+);
+
+// 示例分镜提示词卡片数据
+const EXAMPLE_PROMPT_CARDS = [
+  {
+    index: 0,
+    title: '春日晨曦',
+    description: '太阳初升，阳光透过薄雾洒在一片绿意盎然的草地上，露珠晶莹剔透',
+    prompt: '太阳初升，阳光透过薄雾洒在一片绿意盎然的草地上，露珠晶莹剔透，温暖的晨光，清新自然，高画质，电影感'
+  },
+  {
+    index: 1,
+    title: '花海漫步',
+    description: '遍地花朵，五彩斑斓，微风吹过，花瓣轻轻飘落',
+    prompt: '遍地花朵，五彩斑斓的野花铺满整片草地，微风吹过，花瓣轻轻飘落，梦幻浪漫，柔光，细节丰富'
+  },
+  {
+    index: 2,
+    title: '溪流潺潺',
+    description: '清澈的小溪流过，阳光在水面上闪烁',
+    prompt: '清澈的小溪流过青石，阳光在水面上闪烁，光影斑驳，宁静祥和，自然风光，清新明亮'
+  }
+];
+
+export default function StoryboardWorkspace() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [currentProject, setCurrentProject] = useState<Project | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [workflowState, setWorkflowState] = useState<WorkflowState | null>(null);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
+  const [fromCoordinator, setFromCoordinator] = useState(false);
+  const [selectedPromptIndex, setSelectedPromptIndex] = useState<number | null>(null);
+  const [showExampleCards, setShowExampleCards] = useState(true);
+
+  const {
+    images,
+    videos,
+    isGenerating,
+    isGeneratingVideo,
+    currentTaskId,
+    selectedImage,
+    prompt,
+    size,
+    count,
+    setImages,
+    addImage,
+    removeImage,
+    setSelectedImage,
+    setGenerating,
+    setCurrentTaskId,
+    setPrompt,
+    setSize,
+    setCount,
+    addVideo,
+    removeVideo,
+    clearVideos,
+    setGeneratingVideo,
+  } = useStoryboardStore();
+
+  const [progress, setProgress] = useState(0);
+  const [videoProgress, setVideoProgress] = useState(0);
+
+  // 初始化项目
+  useEffect(() => {
+    const initializeProject = async () => {
+      const projectId = searchParams.get('projectId');
+      const promptIndex = searchParams.get('promptIndex');
+      const useCoordinator = searchParams.get('useCoordinator') === 'true';
+
+      console.log('=== 分镜工作台初始化 ===');
+      console.log('项目ID:', projectId);
+      console.log('提示词索引:', promptIndex);
+      console.log('使用协调器:', useCoordinator);
+
+      if (projectId) {
+        try {
+          // 加载项目信息
+          const project = await projectService.get(projectId);
+          setCurrentProject(project);
+          console.log('✅ 项目加载成功:', project.title);
+
+          // 加载工作流状态和计划
+          try {
+            const workflowData = await coordinatorService.getWorkflowState(projectId);
+            if (workflowData.workflow_state) {
+              setWorkflowState(workflowData.workflow_state);
+              console.log('✅ 工作流状态加载成功');
+
+              // 提取分镜提示词
+              const plan = workflowData.workflow_state.plan;
+              if (plan && plan.storyboard_prompts && plan.storyboard_prompts.length > 0) {
+                setSuggestedPrompts(plan.storyboard_prompts);
+                console.log('✅ 加载了', plan.storyboard_prompts.length, '个分镜提示词');
+                setShowExampleCards(false); // 有真实数据时隐藏示例卡片
+
+                // 如果指定了promptIndex，自动填充提示词
+                if (useCoordinator && promptIndex !== null) {
+                  const index = parseInt(promptIndex, 10);
+                  if (index >= 0 && index < plan.storyboard_prompts.length) {
+                    const selectedPrompt = plan.storyboard_prompts[index];
+                    const descMatch = selectedPrompt.match(/场景描述[:：]\s*([^\n]+)/);
+                    const cleanPrompt = descMatch
+                      ? descMatch[1].trim()
+                      : selectedPrompt.replace(/📸\s*分镜\s*#\d+[:：].*?\n/, '').trim();
+
+                    setPrompt(cleanPrompt);
+                    setFromCoordinator(true);
+                    setSelectedPromptIndex(index);
+                    console.log('✅ 自动填充提示词成功');
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.log('没有找到工作流状态，使用示例卡片');
+          }
+
+          // 加载项目的分镜图片
+          const savedImages = await storyboardImageService.getProjectImages(projectId);
+          const frontendImages = savedImages.map(img => ({
+            id: img.id,
+            url: img.url || '',
+            prompt: img.meta?.prompt || '',
+            size: img.meta?.size || '1024*1024',
+          }));
+          setImages(frontendImages);
+        } catch (error) {
+          console.error('初始化项目失败:', error);
+        }
+      }
+      setIsInitializing(false);
+    };
+
+    initializeProject();
+  }, [searchParams.get('projectId'), searchParams.get('promptIndex'), searchParams.get('useCoordinator')]);
+
+  // 处理生成图片
+  const handleGenerate = async () => {
+    if (!prompt.trim() || isGenerating) return;
+    if (!currentProject) {
+      alert('请先选择一个项目');
+      return;
+    }
+
+    setGenerating(true);
+    setProgress(0);
+
+    try {
+      // 保存提示词
+      const savedPrompt = await promptService.create({
+        project_id: currentProject.id,
+        type: PromptType.IMAGE,
+        content: prompt,
+        source: 'user' as const,
+        metadata: { size, count },
+      });
+
+      // 创建任务
+      const response = await storyboardService.generateImage({
+        prompt,
+        size,
+        n: count,
+      });
+
+      setCurrentTaskId(response.task_id);
+
+      // 等待完成
+      const result = await storyboardService.waitForCompletion(
+        response.task_id,
+        (prog) => setProgress(prog)
+      );
+
+      // 添加图片到列表并保存到数据库
+      if (result.results) {
+        for (const img of result.results) {
+          addImage(img);
+
+          // 保存到数据库
+          await storyboardImageService.create({
+            project_id: currentProject.id,
+            prompt_id: savedPrompt.id,
+            url: img.url,
+            metadata: {
+              prompt: img.prompt,
+              size: size,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      console.error('生成图片失败:', error);
+      alert('生成图片失败，请重试');
+    } finally {
+      setGenerating(false);
+      setCurrentTaskId(null);
+      setProgress(0);
+    }
+  };
+
+  // 处理删除图片
+  const handleDelete = async (imageId: string) => {
+    if (window.confirm('确定删除这张图片吗？')) {
+      try {
+        await storyboardImageService.delete(imageId);
+        removeImage(imageId);
+      } catch (error) {
+        console.error('删除图片失败:', error);
+        alert('删除图片失败');
+      }
+    }
+  };
+
+  // 处理选择图片
+  const handleSelectImage = (image: any) => {
+    setSelectedImage(image);
+  };
+
+  // 处理生成视频
+  const handleGenerateVideo = async () => {
+    if (!selectedImage || isGeneratingVideo) return;
+    if (!currentProject) {
+      alert('请先选择一个项目');
+      return;
+    }
+
+    setGeneratingVideo(true);
+    setVideoProgress(0);
+
+    try {
+      // 基于选中图片生成视频
+      const response = await videoService.generateVideo({
+        prompt: selectedImage.prompt || '生成视频',
+        image_url: selectedImage.url,
+        duration: 5,
+        fps: 30,
+      });
+
+      // 等待完成
+      const result = await videoService.waitForCompletion(
+        response.task_id,
+        (prog) => setVideoProgress(prog)
+      );
+
+      if (result.results && result.results.length > 0) {
+        // 添加视频到store
+        addVideo({
+          id: result.results[0].id,
+          url: result.results[0].url,
+          prompt: selectedImage.prompt,
+          thumbnail: selectedImage.url, // 使用原图作为缩略图
+        });
+
+        console.log('✅ 视频生成成功:', result.results[0]);
+      }
+    } catch (error) {
+      console.error('生成视频失败:', error);
+      alert(`生成视频失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setGeneratingVideo(false);
+      setVideoProgress(0);
+    }
+  };
+
+  // 处理删除视频
+  const handleDeleteVideo = async (videoId: string) => {
+    if (window.confirm('确定删除这个视频吗？')) {
+      removeVideo(videoId);
+    }
+  };
+
+  // 使用示例提示词
+  const useExamplePrompt = (examplePrompt: typeof EXAMPLE_PROMPT_CARDS[0]) => {
+    setPrompt(examplePrompt.prompt);
+    setFromCoordinator(false);
+    setShowExampleCards(false);
+    setSelectedPromptIndex(null);
+  };
+
+  if (isInitializing) {
+    return (
+      <div className="storyboard-workspace">
+        <div className="loading-state">
+          <LoadingIcon />
+          <p>加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="storyboard-workspace">
+      <div className="workspace-header">
+        <div className="header-title">
+          <h1>📸 分镜工作台</h1>
+          {currentProject ? (
+            <div className="project-badge">
+              <span className="project-label">项目:</span>
+              <span className="project-name">{currentProject.title}</span>
+            </div>
+          ) : (
+            <div className="no-project-warning">
+              <p>⚠️ 未选择项目</p>
+              <button
+                className="btn-link"
+                onClick={() => navigate('/projects')}
+              >
+                去选择或创建项目 →
+              </button>
+            </div>
+          )}
+        </div>
+        {currentProject && (
+          <p className="header-description">生成静态分镜照片 - 为视频创作提供参考</p>
+        )}
+      </div>
+
+      <div className="workspace-content">
+        {/* 左侧：生成区域 */}
+        <div className="generate-panel">
+          <div className="panel-section">
+            <h2>
+              <ImagePlusIcon /> 生成图片
+            </h2>
+
+            {/* 示例提示词卡片 */}
+            {showExampleCards && (
+              <div className="form-group">
+                <label>
+                  <Star size={16} /> 快速体验 - 点击卡片使用提示词
+                </label>
+                <div className="prompts-grid" style={{ marginBottom: '16px' }}>
+                  {EXAMPLE_PROMPT_CARDS.map((card) => (
+                    <div
+                      key={card.index}
+                      className="prompt-card"
+                      onClick={() => useExamplePrompt(card)}
+                    >
+                      <div className="prompt-card-header">
+                        <span className="prompt-number">示例 #{card.index + 1}</span>
+                        <span className="prompt-action">→ 使用此提示词</span>
+                      </div>
+                      <div className="prompt-card-title">{card.title}</div>
+                      <div className="prompt-card-desc">{card.description}</div>
+                      <div className="prompt-card-meta">
+                        <span className="meta-tag">默认生成2张</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 提示词输入 */}
+            <div className="form-group">
+              <label>提示词</label>
+              <textarea
+                className="prompt-input"
+                placeholder="例如：温馨的咖啡厅内景，午后阳光透过大落地窗，原木桌椅，精致的白瓷咖啡杯，蒸汽升腾，暖色调，高画质..."
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={4}
+              />
+              <div className="char-count">{prompt.length} 字</div>
+            </div>
+
+            {/* 推荐提示词 */}
+            {suggestedPrompts.length > 0 && !showExampleCards && (
+              <div className="form-group">
+                <label>
+                  <Star size={16} /> 来自创意讨论的提示词
+                </label>
+                <div className="suggested-prompts">
+                  {suggestedPrompts.map((suggestedPrompt, index) => (
+                    <div key={index} className="suggested-prompt-card">
+                      <div className="prompt-header">
+                        <span className="prompt-number">分镜 #{index + 1}</span>
+                        <button
+                          className="btn-use-prompt"
+                          onClick={() => {
+                            const descMatch = suggestedPrompt.match(/场景描述[:：]\s*([^\n]+)/);
+                            const cleanPrompt = descMatch
+                              ? descMatch[1].trim()
+                              : suggestedPrompt.replace(/📸\s*分镜\s*#\d+[:：].*?\n/, '').trim();
+                            setPrompt(cleanPrompt);
+                          }}
+                        >
+                          使用此提示词生成
+                        </button>
+                      </div>
+                      <div className="prompt-content">
+                        {suggestedPrompt}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 参数设置 */}
+            <div className="form-group">
+              <label>图片尺寸</label>
+              <select
+                className="size-select"
+                value={size}
+                onChange={(e) => setSize(e.target.value)}
+              >
+                <option value="1024*1024">1:1 (方形)</option>
+                <option value="720*1280">9:16 (竖版)</option>
+                <option value="1280*720">16:9 (横版)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>生成数量</label>
+              <select
+                className="count-select"
+                value={count}
+                onChange={(e) => setCount(Number(e.target.value))}
+              >
+                <option value={1}>1 张</option>
+                <option value={2}>2 张</option>
+                <option value={3}>3 张</option>
+                <option value={4}>4 张</option>
+              </select>
+            </div>
+
+            {/* 来自创意讨论的提示 */}
+            {fromCoordinator && selectedPromptIndex !== null && (
+              <div className="coordinator-tip">
+                <div className="tip-header">
+                  <Star size={16} />
+                  <span>来自创意讨论的提示词</span>
+                  <button
+                    className="tip-close"
+                    onClick={() => setFromCoordinator(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="tip-content">
+                  <p>这是从创意讨论中自动填充的提示词（分镜 #{selectedPromptIndex + 1}）。</p>
+                  <p>你可以：</p>
+                  <ul>
+                    <li>📝 <strong>调整提示词</strong> - 在上方文本框中修改描述</li>
+                    <li>📐 <strong>调整尺寸</strong> - 选择不同的图片比例（1:1、9:16、16:9）</li>
+                    <li>🔢 <strong>调整数量</strong> - 选择生成的图片数量（默认2张）</li>
+                    <li>✅ <strong>直接生成</strong> - 点击下方按钮开始生成</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* 生成按钮 */}
+            <button
+              className="generate-button"
+              onClick={handleGenerate}
+              disabled={!prompt.trim() || isGenerating}
+            >
+              {isGenerating ? (
+                <>
+                  <LoadingIcon />
+                  生成中... {progress}%
+                </>
+              ) : (
+                <>
+                  <ImagePlusIcon />
+                  生成图片
+                </>
+              )}
+            </button>
+
+            {/* 进度条 */}
+            {isGenerating && (
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${progress}%` }} />
+              </div>
+            )}
+          </div>
+
+          {/* 快捷操作 */}
+          <div className="panel-section">
+            <h2>
+              <Star size={18} /> 快捷操作
+            </h2>
+            <button
+              className="action-button secondary"
+              onClick={() => setPrompt('温馨的咖啡厅内景，午后阳光透过大落地窗，原木桌椅，精致的白瓷咖啡杯，蒸汽升腾，暖色调，高画质，电影感')}
+            >
+              ☕ 咖啡厅场景
+            </button>
+            <button
+              className="action-button secondary"
+              onClick={() => setPrompt('壮丽的金色夕阳缓缓沉入海平线，天空燃烧着橙红色的晚霞，海浪拍打细软的沙滩，电影级调色')}
+            >
+              🌅 海滩日落
+            </button>
+            <button
+              className="action-button secondary"
+              onClick={() => setPrompt('专业的办公空间，开放式设计，大玻璃窗引入充足自然光，多元化团队协作，现代商务氛围')}
+            >
+              💼 现代办公室
+            </button>
+          </div>
+        </div>
+
+        {/* 右侧：图片展示 */}
+        <div className="images-panel">
+          <div className="panel-header">
+            <h2>
+              {images.length > 0 ? `已生成 ${images.length} 张图片` : '图片预览'}
+            </h2>
+            {images.length > 0 && (
+              <button
+                className="clear-button"
+                onClick={() => {
+                  if (window.confirm('确定清空所有图片吗？')) {
+                    setImages([]);
+                  }
+                }}
+              >
+                清空
+              </button>
+            )}
+          </div>
+
+          {images.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">🖼️</div>
+              <h3>还没有生成图片</h3>
+              <p>在左侧输入提示词，点击生成按钮开始创作</p>
+            </div>
+          ) : (
+            <div className="images-grid">
+              {images.map((image) => (
+                <div
+                  key={image.id}
+                  className={`image-card ${selectedImage?.id === image.id ? 'selected' : ''}`}
+                  onClick={() => handleSelectImage(image)}
+                >
+                  <div className="image-wrapper">
+                    <img src={image.url} alt={image.prompt} />
+                    <div className="image-overlay">
+                      <button
+                        className="overlay-button delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(image.id);
+                        }}
+                      >
+                        <Trash2 />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="image-info">
+                    <p className="image-prompt">{image.prompt.slice(0, 50)}...</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 选中的图片操作 */}
+          {selectedImage && (
+            <div className="selected-actions">
+              <h3>已选择图片</h3>
+              <div className="action-buttons">
+                <button
+                  className="action-button"
+                  onClick={handleGenerateVideo}
+                  disabled={isGeneratingVideo}
+                >
+                  {isGeneratingVideo ? (
+                    <>
+                      <LoadingIcon />
+                      生成中... {videoProgress}%
+                    </>
+                  ) : (
+                    <>🎬 生成视频</>
+                  )}
+                </button>
+                <button className="action-button secondary">
+                  🔄 重新生成
+                </button>
+                <button className="action-button secondary">
+                  💾 保存提示词
+                </button>
+              </div>
+
+              {/* 视频生成进度条 */}
+              {isGeneratingVideo && (
+                <div style={{ marginTop: '16px' }}>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${videoProgress}%` }} />
+                  </div>
+                  <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#666' }}>
+                    视频生成中... (可能需要几分钟)
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 视频展示区域 */}
+        {videos.length > 0 && (
+          <div className="images-panel" style={{ marginTop: '24px' }}>
+            <div className="panel-header">
+              <h2>
+                🎬 已生成 {videos.length} 个视频
+              </h2>
+              <button
+                className="clear-button"
+                onClick={() => {
+                  if (window.confirm('确定清空所有视频吗？')) {
+                    clearVideos();
+                  }
+                }}
+              >
+                清空
+              </button>
+            </div>
+            <div className="images-grid">
+              {videos.map((video) => (
+                <div key={video.id} className="image-card">
+                  <div className="image-wrapper" style={{ aspectRatio: '16/9', backgroundColor: '#000' }}>
+                    <video
+                      src={video.url}
+                      controls
+                      poster={video.thumbnail}
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                    />
+                    <div className="image-overlay">
+                      <button
+                        className="overlay-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // 下载视频
+                          const a = document.createElement('a');
+                          a.href = video.url;
+                          a.download = `video_${video.id}.mp4`;
+                          a.target = '_blank';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                        }}
+                        title="下载视频"
+                      >
+                        ⬇️
+                      </button>
+                      <button
+                        className="overlay-button delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteVideo(video.id);
+                        }}
+                        title="删除视频"
+                      >
+                        <Trash2 />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="image-info">
+                    <p className="image-prompt">{video.prompt.slice(0, 50)}...</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

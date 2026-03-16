@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>静态文件测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-item {
+            background: white;
+            padding: 20px;
+            margin: 10px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-item h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        img, video {
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .url {
+            background: #f0f0f0;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            margin-left: 10px;
+        }
+        .status.loading { background: #fff3cd; color: #856404; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <h1>🧪 静态文件访问测试</h1>
+    <p>测试从 http://localhost:8000/static/demo-cases/ 加载文件</p>
+
+    <div class="test-item">
+        <h3>📸 图片测试 - 分镜1</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_1_image.jpg</div>
+        <span class="status loading" id="img1-status">加载中...</span>
+        <br>
+        <img
+            id="img1"
+            src="http://localhost:8000/static/demo-cases/fragment_1_image.jpg"
+            alt="分镜1图片"
+            onload="document.getElementById('img1-status').className='status success'; document.getElementById('img1-status').textContent='✅ 加载成功'"
+            onerror="document.getElementById('img1-status').className='status error'; document.getElementById('img1-status').textContent='❌ 加载失败'"
+        >
+    </div>
+
+    <div class="test-item">
+        <h3>🎬 视频测试 - 分镜1</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_1_video.mp4</div>
+        <span class="status loading" id="video1-status">加载中...</span>
+        <br>
+        <video
+            id="video1"
+            src="http://localhost:8000/static/demo-cases/fragment_1_video.mp4"
+            controls
+            preload="metadata"
+            style="width: 100%; max-width: 600px;"
+            onloadedmetadata="document.getElementById('video1-status').className='status success'; document.getElementById('video1-status').textContent='✅ 加载成功'"
+            onerror="document.getElementById('video1-status').className='status error'; document.getElementById('video1-status').textContent='❌ 加载失败'"
+        ></video>
+    </div>
+
+    <div class="test-item">
+        <h3>📸 图片测试 - 分镜2</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_2_image.jpg</div>
+        <img
+            src="http://localhost:8000/static/demo-cases/fragment_2_image.jpg"
+            alt="分镜2图片"
+            style="width: 100%; max-width: 600px;"
+        >
+    </div>
+
+    <div class="test-item">
+        <h3>🎬 视频测试 - 分镜2</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_2_video.mp4</div>
+        <video
+            src="http://localhost:8000/static/demo-cases/fragment_2_video.mp4"
+            controls
+            preload="metadata"
+            style="width: 100%; max-width: 600px;"
+        ></video>
+    </div>
+
+    <div class="test-item">
+        <h3>📸 图片测试 - 分镜3</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_3_image.jpg</div>
+        <img
+            src="http://localhost:8000/static/demo-cases/fragment_3_image.jpg"
+            alt="分镜3图片"
+            style="width: 100%; max-width: 600px;"
+        >
+    </div>
+
+    <div class="test-item">
+        <h3>🎬 视频测试 - 分镜3</h3>
+        <div class="url">URL: http://localhost:8000/static/demo-cases/fragment_3_video.mp4</div>
+        <video
+            src="http://localhost:8000/static/demo-cases/fragment_3_video.mp4"
+            controls
+            preload="metadata"
+            style="width: 100%; max-width: 600px;"
+        ></video>
+    </div>
+
+    <div class="test-item">
+        <h3>🔍 API测试</h3>
+        <p>测试演示案例API是否返回正确数据</p>
+        <button onclick="testAPI()">测试API</button>
+        <pre id="api-result"></pre>
+    </div>
+
+    <script>
+        async function testAPI() {
+            const resultEl = document.getElementById('api-result');
+            resultEl.textContent = '加载中...';
+
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/demo-cases/latest');
+                const data = await response.json();
+
+                resultEl.textContent = JSON.stringify(data, null, 2);
+                console.log('API返回数据:', data);
+            } catch (error) {
+                resultEl.textContent = '错误: ' + error.message;
+                console.error('API错误:', error);
+            }
+        }
+
+        // 页面加载时自动测试API
+        window.addEventListener('load', () => {
+            setTimeout(testAPI, 500);
+        });
+
+        // 检查环境变量
+        console.log('当前页面URL:', window.location.href);
+        console.log('前端URL:', window.location.origin);
+    </script>
+</body>
+</html>
