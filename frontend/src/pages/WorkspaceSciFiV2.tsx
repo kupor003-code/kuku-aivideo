@@ -289,7 +289,7 @@ export default function WorkspaceSciFi() {
             model: "doubao-seedance-1-5-pro-251215",
             model_name: "豆包视频生成 (Seedance 1.5 Pro)"
           },
-          output: "https://ark-content-generation-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-1-5-pro/02177358807640900000000000000000000ffffac191d36f86f90.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260315%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260315T152153Z&X-Tos-Expires=86400&X-Tos-Signature=8f1b4e4c9e0c4114e9ca731f37162fd269d0a44badc04f9ee772210b15230e56&X-Tos-SignedHeaders=host",
+          output: "/static/demo-cases/demo-video-1.mp4",
           modelName: "豆包视频生成 (Seedance 1.5 Pro)"
         }
       },
@@ -319,7 +319,7 @@ export default function WorkspaceSciFi() {
             model: "doubao-seedance-1-5-pro-251215",
             model_name: "豆包视频生成 (Seedance 1.5 Pro)"
           },
-          output: "https://ark-content-generation-cn-beijing.tos-cn-beijing.volces.com/doubao-seedance-1-5-pro/02177358800425800000000000000000000ffffac191d3681370d.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=AKLTYWJkZTExNjA1ZDUyNDc3YzhjNTM5OGIyNjBhNDcyOTQ%2F20260315%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260315T152051Z&X-Tos-Expires=86400&X-Tos-Signature=0a8075f404df457b779634944d02e32de4f78fbb5e2bdd41e73ae28d7bcd8920&X-Tos-SignedHeaders=host",
+          output: "/static/demo-cases/demo-video-2.mp4",
           modelName: "豆包视频生成 (Seedance 1.5 Pro)"
         }
       },
